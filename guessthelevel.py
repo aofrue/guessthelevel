@@ -295,7 +295,17 @@ async def add_level(interaction: discord.Interaction, name: str, image_url: str)
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
-    await tree.sync()  # Синхронизируем слэш-команды с Discord
+    await tree.sync()
     print("Слэш-команды синхронизированы!")
+
+@bot.event
+async def on_disconnect():
+    logger.warning("Бот отключился от Discord Gateway. Попытка переподключения...")
+    await asyncio.sleep(5)  # Задержка перед повторным подключением
+
+@bot.event
+async def on_resumed():
+    logger.info("Бот успешно восстановил соединение.")
+
 # Запуск бота
 bot.run(TOKEN)
