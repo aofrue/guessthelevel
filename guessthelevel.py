@@ -301,7 +301,14 @@ async def on_ready():
 @bot.event
 async def on_disconnect():
     logger.warning("Бот отключился от Discord Gateway. Попытка переподключения...")
-    await asyncio.sleep(5)  # Задержка перед повторным подключением
+    while True:  # Бесконечный цикл для повторных попыток подключения
+        try:
+            await bot.connect(reconnect=True)  # Попытка переподключения
+            logger.info("Бот успешно переподключился.")
+            break  # Выход из цикла, если переподключение успешно
+        except Exception as e:
+            logger.error(f"Не удалось переподключиться. Ошибка: {e}")
+            await asyncio.sleep(10)  # Задержка перед следующей попыткой
 
 @bot.event
 async def on_resumed():
