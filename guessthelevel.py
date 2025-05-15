@@ -1,15 +1,17 @@
-import discord,logging,random,sqlite3,os,json,asyncio
-from discord.ext import commands
+# pip install discord.py
+import discord,random,sqlite3,os,json,asyncio,logging
 from discord import app_commands
+from discord.ext import commands
+
+# Настройка для сервера
+gdps_name = "GDPS"
+required_role_name = "addlevel" # Без этой роли нельзя будет добавлять уровни в нашу бд
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Токен и название гдпса (ОБЯЗАТЕЛЬНО ДОБАВЬТЕ ТОКЕН, ИНАЧЕ НЕ БУДЕТ РАБОТАТЬ!!!)
-# (Чтобы добавлять уровни, создайте отдельную роль и назовите ёё, как она записана в строчке)
-GDPS_NAME = "GDPS"
-required_role_name = "addlevel"
+# Загрузка токена бота (замените на свой)
 TOKEN = ""
 
 # Создаем бота с префиксом команды "/"
@@ -55,16 +57,31 @@ def is_guild_channel(interaction: discord.Interaction):
         return False
     return True
 
-# Логика игры
-async def guess_level_logic(interaction: discord.Interaction):
+# Команда для запуска игры
+@tree.command(name="guess", description="Запустить игру 'Угадай уровень'")
+async def guess_level(interaction: discord.Interaction):
     # Проверяем, что команда выполняется не в личных сообщениях
     if not is_guild_channel(interaction):
         await interaction.response.send_message("Эта команда недоступна в личных сообщениях!", ephemeral=True)
         return
+    
+    # Отправляем статус "думает..."
+    await interaction.response.defer()
+    
+    # Запускаем логику игры
+    await guess_level_logic(interaction)
+
+
+# Логика игры
+async def guess_level_logic(interaction: discord.Interaction):
+    # Проверяем, что команда выполняется не в личных сообщениях
+    if not is_guild_channel(interaction):
+        await interaction.followup.send("Эта команда недоступна в личных сообщениях!", ephemeral=True)
+        return
 
     # Проверяем, не запущена ли уже игра
     if interaction.channel.id in active_games:
-        await interaction.response.send_message("Игра уже запущена в этом канале!")
+        await interaction.followup.send("Игра уже запущена в этом канале!")
         return
 
     # Получаем список заблокированных уровней для текущего канала
@@ -102,39 +119,30 @@ async def guess_level_logic(interaction: discord.Interaction):
     if used_levels[interaction.channel.id]["counter"] >= 5:
         used_levels[interaction.channel.id] = {"blocked": [], "counter": 0}
 
-    # Запускаем фоновую задачу
-    asyncio.create_task(game_task(interaction, level_name, level_image_url))
-
-# Команда для запуска игры
-@tree.command(name="guess", description="Запустить игру 'Угадай уровень'")
-async def guess_level(interaction: discord.Interaction):
-    # Проверяем, что команда выполняется не в личных сообщениях
-    if not is_guild_channel(interaction):
-        await interaction.response.send_message("Эта команда недоступна в личных сообщениях!", ephemeral=True)
-        return
-
-    await guess_level_logic(interaction)
-
-# Фоновая задача для игры
-async def game_task(interaction: discord.Interaction, level_name: str, level_image_url: str):
-    # Проверяем, что команда выполняется не в личных сообщениях
-    if not is_guild_channel(interaction):
-        return
-    # Отправляем изображение уровня
-    global GDPS_NAME
+    # Создаем embed для изображения уровня
+    global gdps_name
     embed = discord.Embed(
-        title="Угадай уровень",
-        description=f"Уровень есть на {GDPS_NAME}",
+        title="Угадай уровень!",
+        description=f"Уровень есть на {gdps_name}",
         color=0x6b6b6b
-        )
+    )
     embed.set_image(url=level_image_url)
+
+    # Отправляем embed после завершения "думает..."
     try:
-        # Попытка отправить сообщение через followup
         await interaction.followup.send(embed=embed)
     except discord.errors.NotFound:
-        # Если followup недоступен, отправляем сообщение через канал
         logger.error("Followup send failed: Unknown Webhook")
         await interaction.channel.send(embed=embed)
+
+    # Запускаем фоновую задачу
+    asyncio.create_task(game_task(interaction, level_name))
+
+# Фоновая задача для игры
+async def game_task(interaction: discord.Interaction, level_name: str):
+    # Проверяем, что команда выполняется не в личных сообщениях
+    if not is_guild_channel(interaction):
+        return
 
     # Ждем ответа от пользователей
     def check(message):
@@ -163,12 +171,12 @@ async def game_task(interaction: discord.Interaction, level_name: str, level_ima
         try:
             # Создаем embed для сообщения об угадывании уровня
             embed = discord.Embed(
-                title="🎉 Уровень угадан!",
+                title="🎉 Название разгадано!",
                 description=f"{user.mention} угадал уровень! +{points} очков.",
                 color=0x00ff00  # Зеленый цвет для успеха
             )
-            embed.add_field(name="Всего очков:", value=str(total_points), inline=False)
-            
+            embed.add_field(name=f"Всего очков:", value=str(total_points), inline=False)
+
             # Отправляем embed через followup
             await interaction.followup.send(embed=embed, view=GameEndView())
         except discord.errors.NotFound:
@@ -181,16 +189,17 @@ async def game_task(interaction: discord.Interaction, level_name: str, level_ima
             # Создаем embed для сообщения о завершении времени
             embed = discord.Embed(
                 title="⏰ Время вышло!",
-                description="Никто не угадал этот уровень.",
+                description="Никто не успел угадать уровень.",
                 color=0xff0000  # Красный цвет для обозначения завершения
             )
-            
+
             # Отправляем embed через followup
             await interaction.followup.send(embed=embed, view=GameEndView())
         except discord.errors.NotFound:
             # Если followup недоступен, отправляем embed через канал
             logger.error("Followup send failed: Unknown Webhook")
             await interaction.channel.send(embed=embed, view=GameEndView())
+
     finally:
         # Очищаем игру
         del active_games[interaction.channel.id]
@@ -199,18 +208,38 @@ async def game_task(interaction: discord.Interaction, level_name: str, level_ima
 class GameEndView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
-    @discord.ui.button(label="Сыграть снова", style=discord.ButtonStyle.blurple)
+        
+    @discord.ui.button(label="Сыграть снова", style=discord.ButtonStyle.blurple, custom_id="play_again_button")
     async def play_again(self, interaction: discord.Interaction, button: discord.ui.Button):
         # Проверяем, что команда выполняется не в личных сообщениях
         if not is_guild_channel(interaction):
             await interaction.response.send_message("Эта команда недоступна в личных сообщениях!", ephemeral=True)
             return
 
+        # Показываем статус "думает..."
+        await interaction.response.defer()
+
         # Запускаем игру с обновленной сложностью
-        await interaction.response.defer()  # Откладываем ответ
         await guess_level_logic(interaction)
+
+        # Останавливаем view
         self.stop()
+
+# Глобальный обработчик компонентов
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    # Проверяем, является ли взаимодействие нажатием на кнопку "Сыграть снова"
+    if interaction.type == discord.InteractionType.component and interaction.data.get("custom_id") == "play_again_button":
+        # Проверяем, что команда выполняется не в личных сообщениях
+        if not is_guild_channel(interaction):
+            await interaction.response.send_message("Эта команда недоступна в личных сообщениях!", ephemeral=True)
+            return
+        
+        # Показываем статус "думает..."
+        await interaction.response.defer()
+        
+        # Запускаем игру с обновленной сложностью
+        await guess_level_logic(interaction)
 
 # Команда для просмотра таблицы лидеров
 @tree.command(name="leaderboard", description="Показать таблицу лидеров")
@@ -289,30 +318,27 @@ async def add_level(interaction: discord.Interaction, name: str, image_url: str)
     with open(LEVELS_FILE, "w") as f:
         json.dump(levels_data, f)  # Сохраняем данные обратно в файл
 
-    await interaction.response.send_message(f'Уровень "{name}" успешно добавлен!')
+    await interaction.response.send_message(f"Уровень '{name}' успешно добавлен!")
 
-# Синхронизация команд при запуске бота
+async def run_bot_with_reconnect():
+    while True:
+        try:
+            print("Запуск бота...")
+            await bot.start(TOKEN)
+        except Exception as e:
+            logger.error(f"Произошла ошибка: {e}")
+        finally:
+            # Ждем 3 часа перед повторным подключением
+            await asyncio.sleep(10800)  # 3 часа = 10800 секунд
+            print("Переподключение бота...")
+
+# Обработчик события on_ready
 @bot.event
 async def on_ready():
     print(f"Бот {bot.user} запущен!")
     await tree.sync()
     print("Слэш-команды синхронизированы!")
 
-@bot.event
-async def on_disconnect():
-    logger.warning("Бот отключился от Discord Gateway. Попытка переподключения...")
-    while True:  # Бесконечный цикл для повторных попыток подключения
-        try:
-            await bot.connect(reconnect=True)  # Попытка переподключения
-            logger.info("Бот успешно переподключился.")
-            break  # Выход из цикла, если переподключение успешно
-        except Exception as e:
-            logger.error(f"Не удалось переподключиться. Ошибка: {e}")
-            await asyncio.sleep(10)  # Задержка перед следующей попыткой
-
-@bot.event
-async def on_resumed():
-    logger.info("Бот успешно восстановил соединение.")
-
 # Запуск бота
-bot.run(TOKEN)
+if __name__ == "__main__":
+    asyncio.run(run_bot_with_reconnect())
